@@ -8,7 +8,14 @@
 			"Name": "Untitled_3d_Person",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "PlayerCharacter",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
+
+
 	],
 	"Plugins": [
 		{

@@ -11,5 +11,6 @@ public class Untitled_3d_PersonTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V2;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_1;
 		ExtraModuleNames.Add("Untitled_3d_Person");
-	}
+        ExtraModuleNames.Add("PlayerCharacter");
+    }
 }
