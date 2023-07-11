@@ -7,7 +7,10 @@
 		{
 			"Name": "Untitled_3d_Person",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
 		},
 		{
 			"Name": "PlayerCharacter",
