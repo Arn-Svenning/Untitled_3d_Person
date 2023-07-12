@@ -4,6 +4,8 @@
 #include "PlayerCharacterBase.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Runtime/Engine/Classes/Components/TimelineComponent.h"
+#include "Curves/CurveFloat.h"
 #include <EnhancedInputSubsystems.h>
 #include <EnhancedInputComponent.h>
 #include "GameFrameWork/SpringArmComponent.h"
@@ -27,14 +29,17 @@ APlayerCharacterBase::APlayerCharacterBase()
 
 	// USpringArmComponent Configuration
 	CameraBoomComponent = CreateDefaultSubobject<USpringArmComponent>(TEXT("Camera boom"));
-	CameraBoomComponent->SetupAttachment(RootComponent);
-	CameraBoomComponent->TargetArmLength = 400.f; // From how far should the Spring arm Component be placed
+	CameraBoomComponent->SetupAttachment(RootComponent);	
 	CameraBoomComponent->bUsePawnControlRotation = true; // Should the Spring arm component rotate based on the player's rotation?
 
 	// UCameraComponent Configuration
 	FollowCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("Follow camera")); // Creating cameraComponent
 	FollowCameraComponent->SetupAttachment(CameraBoomComponent, USpringArmComponent::SocketName); // Attach the character to the Spring arm component
 	FollowCameraComponent->bUsePawnControlRotation = false; // Should the Camera component rotate relative to the player's rotation?
+
+	TLRangedCameraComponent = CreateDefaultSubobject<UTimelineComponent>(TEXT("Ranged Camera Timeline"));
+	RangedCameraInterpFunction.BindUFunction(this, FName("TLRangedCameraUpdate"));
+	RangedCameraTimelineFinished.BindUFunction(this, FName("TLRangedCameraFinished"));	
 
 }
 
@@ -49,6 +54,7 @@ void APlayerCharacterBase::BeginPlay()
 		if (UEnhancedInputLocalPlayerSubsystem* subSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(playerController->GetLocalPlayer()))
 		{
 			subSystem->AddMappingContext(PlayerMovementContext, 0);
+			subSystem->AddMappingContext(PlayerWeaponMappingContext, 0);
 		}
 	}
 }
@@ -57,6 +63,8 @@ void APlayerCharacterBase::BeginPlay()
 void APlayerCharacterBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	CharacterRotation(DeltaTime);
 
 }
 
@@ -77,6 +85,9 @@ void APlayerCharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInpu
 
 		// Looking
 		EnhancedInputComponent->BindAction(PlayerLookAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::Look);
+
+		EnhancedInputComponent->BindAction(PlayerAimAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::Aim);
+		EnhancedInputComponent->BindAction(PlayerAimAction, ETriggerEvent::Completed, this, &APlayerCharacterBase::StopAim);
 	}
 }
 
@@ -112,5 +123,69 @@ void APlayerCharacterBase::Look(const FInputActionValue& Value)
 		AddControllerYawInput(lookingAxisVector.X);
 		AddControllerPitchInput(lookingAxisVector.Y);
 	}
+}
+
+void APlayerCharacterBase::LerpCameraPositionC(float boomLengthIdle, float boomLengthAimed, float alpha)
+{
+	float lerpBoomLength = FMath::Lerp(boomLengthIdle, boomLengthAimed, alpha);
+	CameraBoomComponent->TargetArmLength = lerpBoomLength;
+}
+
+void APlayerCharacterBase::UpdateRangedCamera()
+{
+	if (TLRangedCamera_Curve != nullptr)
+	{
+		TLRangedCameraComponent->AddInterpFloat(TLRangedCamera_Curve, RangedCameraInterpFunction, FName("Update Ranged Camera"));
+	}
+	TLRangedCameraComponent->SetPlayRate(8);
+	TLRangedCameraComponent->Play();
+	TLRangedCameraComponent->SetLooping(false);
+}
+
+void APlayerCharacterBase::TLRangedCameraUpdate(float value)
+{
+	LerpCameraPositionC(CameraBoomIdle, CameraBoomAimed, value);
+}
+
+void APlayerCharacterBase::TLRangedCameraFinished()
+{
+	TLRangedCameraComponent->Reverse();
+}
+
+void APlayerCharacterBase::CharacterRotation(float DeltaTime)
+{
+	if (bIsAiming)
+	{
+		FRotator actorRotation = GetActorRotation();
+		FRotator controlRotation = GetControlRotation();
+
+		FRotator newCharacterRotation = FRotator(actorRotation.Pitch, controlRotation.Yaw, actorRotation.Roll);
+		FRotator interpRotation = FMath::RInterpTo(actorRotation, newCharacterRotation, DeltaTime, 50);
+
+		SetActorRotation(interpRotation);
+	}
+}
+
+void APlayerCharacterBase::Aim()
+{
+	bIsLeftTriggerDown = true;
+	bIsAiming = true;
+	bUseControllerRotation = true;
+	CameraTurnRate = CameraTurnRateAim;
+
+	GetCharacterMovement()->MaxWalkSpeed = MaxWalkSpeedAim;
+	UpdateRangedCamera();
+}
+
+void APlayerCharacterBase::StopAim()
+{
+	bIsLeftTriggerDown = false;
+	bIsAiming = false;
+	bUseControllerRotation = false;
+	CameraTurnRate = CameraTurnRateIdle;
+
+	GetCharacterMovement()->MaxWalkSpeed = MaxWalkSpeedIdle;
+	TLRangedCameraComponent->SetPlayRate(8);
+	TLRangedCameraComponent->Reverse();
 }
 
