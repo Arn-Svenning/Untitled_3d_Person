@@ -12,5 +12,7 @@ public class Untitled_3d_PersonEditorTarget : TargetRules
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_1;
 		ExtraModuleNames.Add("Untitled_3d_Person");
         ExtraModuleNames.Add("PlayerCharacter");
+        ExtraModuleNames.Add("Struct");
+        ExtraModuleNames.Add("Weapon");
     }
 }

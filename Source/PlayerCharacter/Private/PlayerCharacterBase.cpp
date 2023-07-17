@@ -6,16 +6,21 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Runtime/Engine/Classes/Components/TimelineComponent.h"
 #include "Curves/CurveFloat.h"
+#include "CableComponent.h"
 #include <EnhancedInputSubsystems.h>
 #include <EnhancedInputComponent.h>
 #include "GameFrameWork/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Weapon/public/DefaultThrowingWeapon.h"
+
 
 // Sets default values
 APlayerCharacterBase::APlayerCharacterBase()
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+
+	DoOnce.Reset();
 
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -27,19 +32,32 @@ APlayerCharacterBase::APlayerCharacterBase()
 	// Player rotation
 	GetCharacterMovement()->bOrientRotationToMovement = true; // Character moves in the direction of input...
 
-	// USpringArmComponent Configuration
+	/// <summary>
+	/// Normal components
+	/// </summary>    
+	
 	CameraBoomComponent = CreateDefaultSubobject<USpringArmComponent>(TEXT("Camera boom"));
 	CameraBoomComponent->SetupAttachment(RootComponent);	
 	CameraBoomComponent->bUsePawnControlRotation = true; // Should the Spring arm component rotate based on the player's rotation?
-
-	// UCameraComponent Configuration
+	
 	FollowCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("Follow camera")); // Creating cameraComponent
 	FollowCameraComponent->SetupAttachment(CameraBoomComponent, USpringArmComponent::SocketName); // Attach the character to the Spring arm component
 	FollowCameraComponent->bUsePawnControlRotation = false; // Should the Camera component rotate relative to the player's rotation?
 
+	ThrowingWeaponChildComponent = CreateDefaultSubobject<UChildActorComponent>(TEXT("Throwing Weapon Child Actor"));
+	ThrowingWeaponChildComponent->SetupAttachment(GetMesh(), FName("WeaponGripPoint"));
+	
+	RopeComponent = CreateDefaultSubobject<UCableComponent>(TEXT("Throwing Weapon Rope"));
+	RopeComponent->SetupAttachment(GetMesh(), FName("RopeSocket"));
+	RopeComponent->bAttachEnd = true;		
+
+	/// <summary>
+	/// Timelines
+	/// </summary> 
 	TLRangedCameraComponent = CreateDefaultSubobject<UTimelineComponent>(TEXT("Ranged Camera Timeline"));
 	RangedCameraInterpFunction.BindUFunction(this, FName("TLRangedCameraUpdate"));
 	RangedCameraTimelineFinished.BindUFunction(this, FName("TLRangedCameraFinished"));	
+
 
 }
 
@@ -57,6 +75,17 @@ void APlayerCharacterBase::BeginPlay()
 			subSystem->AddMappingContext(PlayerWeaponMappingContext, 0);
 		}
 	}
+
+	TArray<FName> viableSockets = DefaultThrowingWeaponReference->ThrowingWeaponMeshComponent->GetAllSocketNames();
+	for (int i = 0; i < viableSockets.Num(); i++)
+	{
+		if (viableSockets[i] == FName("ThrowingWeaponRope"))
+		{
+			RopeComponent->SetAttachEndTo(DefaultThrowingWeaponReference, FName("ThrowingWeaponMeshComponent"), viableSockets[i]);
+		}
+	}
+
+	
 }
 
 // Called every frame
@@ -64,7 +93,7 @@ void APlayerCharacterBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	CharacterRotation(DeltaTime);
+	CharacterRotation(DeltaTime);	
 
 }
 
@@ -86,11 +115,32 @@ void APlayerCharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInpu
 		// Looking
 		EnhancedInputComponent->BindAction(PlayerLookAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::Look);
 
+		// Aim
 		EnhancedInputComponent->BindAction(PlayerAimAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::Aim);
 		EnhancedInputComponent->BindAction(PlayerAimAction, ETriggerEvent::Completed, this, &APlayerCharacterBase::StopAim);
+
+		// Throwing weapon
+		EnhancedInputComponent->BindAction(LaunchThrowingWeaponAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::LaunchThrowingWeapon);
+		EnhancedInputComponent->BindAction(ThrowingWeaponRecallAction, ETriggerEvent::Triggered, this, &APlayerCharacterBase::RecallThrowingWeapon);
 	}
 }
+// Attach the throwing weapon to player socket (WeaponGripPoint)
+void APlayerCharacterBase::CatchThrowingWeapon()
+{
+	if (DefaultThrowingWeaponReference != nullptr)
+	{		
+		RopeComponent->SetVisibility(false);
 
+		DefaultThrowingWeaponReference->AttachToComponent(GetMesh(), FAttachmentTransformRules(EAttachmentRule::SnapToTarget, EAttachmentRule::SnapToTarget, EAttachmentRule::SnapToTarget, false), FName("WeaponGripPoint"));
+		
+		bIsThrowingWeaponLaunched = false;
+
+		DefaultThrowingWeaponReference->CurrentThrowingWeaponState = ThrowingWeaponState::Idle;
+
+		DoOnce.Reset();
+	}
+}
+// Called for default movement
 void APlayerCharacterBase::Move(const FInputActionValue& Value)
 {
 	FVector2D MovementVector = Value.Get<FVector2D>();
@@ -112,7 +162,7 @@ void APlayerCharacterBase::Move(const FInputActionValue& Value)
 		AddMovementInput(RightDirection, MovementVector.X);
 	}
 }
-
+// Called for looking around with the camera
 void APlayerCharacterBase::Look(const FInputActionValue& Value)
 {
 	FVector2D lookingAxisVector = Value.Get<FVector2D>();
@@ -124,13 +174,13 @@ void APlayerCharacterBase::Look(const FInputActionValue& Value)
 		AddControllerPitchInput(lookingAxisVector.Y);
 	}
 }
-
-void APlayerCharacterBase::LerpCameraPositionC(float boomLengthIdle, float boomLengthAimed, float alpha)
+// Switch between idle camera and aimed camera
+void APlayerCharacterBase::LerpCameraPosition(float boomLengthIdle, float boomLengthAimed, float alpha)
 {
 	float lerpBoomLength = FMath::Lerp(boomLengthIdle, boomLengthAimed, alpha);
 	CameraBoomComponent->TargetArmLength = lerpBoomLength;
 }
-
+// Updates the camera based on whether or not the player is aiming 
 void APlayerCharacterBase::UpdateRangedCamera()
 {
 	if (TLRangedCamera_Curve != nullptr)
@@ -141,17 +191,17 @@ void APlayerCharacterBase::UpdateRangedCamera()
 	TLRangedCameraComponent->Play();
 	TLRangedCameraComponent->SetLooping(false);
 }
-
+// Update the timeline for switching between idle and aimed camera
 void APlayerCharacterBase::TLRangedCameraUpdate(float value)
 {
-	LerpCameraPositionC(CameraBoomIdle, CameraBoomAimed, value);
+	LerpCameraPosition(CameraBoomIdle, CameraBoomAimed, value);
 }
-
+// If player isn't aiming reverse the timeline back to idle camera position
 void APlayerCharacterBase::TLRangedCameraFinished()
 {
 	TLRangedCameraComponent->Reverse();
 }
-
+// Rotate the player accordingly when the player is aiming a weapon
 void APlayerCharacterBase::CharacterRotation(float DeltaTime)
 {
 	if (bIsAiming)
@@ -165,27 +215,58 @@ void APlayerCharacterBase::CharacterRotation(float DeltaTime)
 		SetActorRotation(interpRotation);
 	}
 }
-
+// Aim the equipped weapon
 void APlayerCharacterBase::Aim()
-{
-	bIsLeftTriggerDown = true;
-	bIsAiming = true;
-	bUseControllerRotation = true;
+{	
+	bIsAiming = true;	
 	CameraTurnRate = CameraTurnRateAim;
 
 	GetCharacterMovement()->MaxWalkSpeed = MaxWalkSpeedAim;
 	UpdateRangedCamera();
 }
-
+// Stop aiming the equipped weapon
 void APlayerCharacterBase::StopAim()
 {
-	bIsLeftTriggerDown = false;
-	bIsAiming = false;
-	bUseControllerRotation = false;
+	bIsAiming = false;	
 	CameraTurnRate = CameraTurnRateIdle;
 
 	GetCharacterMovement()->MaxWalkSpeed = MaxWalkSpeedIdle;
 	TLRangedCameraComponent->SetPlayRate(8);
 	TLRangedCameraComponent->Reverse();
 }
+// Launch the equipped throwing weapon
+void APlayerCharacterBase::LaunchThrowingWeapon()
+{
+	if (Controller != nullptr && DefaultThrowingWeaponReference != nullptr)
+	{
+		if (bIsAiming)
+		{			
+			if (!bIsThrowingWeaponLaunched)
+			{
+				RopeComponent->SetVisibility(true);
+
+				DefaultThrowingWeaponReference->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);				
+
+				DefaultThrowingWeaponReference->ThrowWeapon(FollowCameraComponent->GetComponentRotation(), FollowCameraComponent->GetForwardVector(), GetMesh()->GetSocketLocation(FName("WeaponGripPoint")), WeaponThrowSpeed);
+
+				bIsThrowingWeaponLaunched = true;
+			}
+		}
+	}
+}
+// Recall the equipped throwing weapon 
+void APlayerCharacterBase::RecallThrowingWeapon()
+{
+	if (Controller != nullptr && DefaultThrowingWeaponReference != nullptr)
+	{
+		if (bIsThrowingWeaponLaunched)
+		{						
+			if (DoOnce.Execute())
+			{
+				DefaultThrowingWeaponReference->RecallThrowingWeapon();
+			}			
+		}
+	}
+}
+
 

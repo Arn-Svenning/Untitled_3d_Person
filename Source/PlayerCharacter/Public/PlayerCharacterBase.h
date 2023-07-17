@@ -4,14 +4,17 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "Struct/public/DoOnce.h"
 #include "InputActionValue.h"
 #include "Runtime/Engine/Classes/Components/TimelineComponent.h"
 #include "PlayerCharacterBase.generated.h"
 
 class USpringArmComponent;
 class UInputMappingContext;
+class ADefaultThrowingWeapon;
 class UInputAction;
 class UCameraComponent;
+class UCableComponent;
 
 
 UCLASS()
@@ -41,17 +44,25 @@ public:
 
 public:
 
+	// Player camera
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
+		UCameraComponent* FollowCameraComponent;
+
 protected:
+	
 
 private:
 
 	// Holds camera at a fixed distance from player
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		USpringArmComponent* CameraBoomComponent;
+		USpringArmComponent* CameraBoomComponent;	
 
-	// Player camera
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		UCameraComponent* FollowCameraComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Throwing Weapon", meta = (AllowPrivateAccess = true))
+		UChildActorComponent* ThrowingWeaponChildComponent;
+
+	// A rope that attaches the start point to the character's hand and the the end point to the throwing weapon
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Throwing Weapon", meta = (AllowPrivateAccess = true))
+		UCableComponent* RopeComponent;
 
 	// Timeline that handles lerping between aim camera and no aim camera
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Timeline", meta = (AllowPrivateAccess = true))
@@ -71,6 +82,7 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = true))
 		UInputMappingContext* PlayerMovementContext;
 
+	// Weapon mapping context
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = true))
 		UInputMappingContext* PlayerWeaponMappingContext;
 
@@ -90,24 +102,32 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = true))
 		UInputAction* PlayerAimAction;
 
+	// Launch throwing weapon action
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = true))
+		UInputAction* LaunchThrowingWeaponAction;
+
+	// Recall throwing weapon action
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = true))
+		UInputAction* ThrowingWeaponRecallAction;
+
 #pragma endregion
 
 #pragma region FUNCTIONS
 
 public:
 
+	UFUNCTION()
+		void CatchThrowingWeapon(); // Catch the throwing weapon and set CurrentThrowingWeaponState == ThrowingWeaponState::Idle
+
 protected:
 
 private:
 
-	void Move(const FInputActionValue& Value);
-	void Look(const FInputActionValue& Value);
+	UFUNCTION()
+	void Move(const FInputActionValue& Value); // Default movement 
 
 	UFUNCTION()
-		void LerpCameraPositionC(float boomLengthIdle, float boomLengthAimed, float alpha); // Lerp between aimed camera and idle aim camera for smooth transition
-
-	UFUNCTION()
-		void UpdateRangedCamera(); // Handle the logic for camera
+	void Look(const FInputActionValue& Value);	// Looking around with the camera
 
 	UFUNCTION()
 		void TLRangedCameraUpdate(float value); // Update camera position when aiming
@@ -116,13 +136,25 @@ private:
 		void TLRangedCameraFinished(); // Handles idle aim camera
 
 	UFUNCTION()
+		void LerpCameraPosition(float boomLengthIdle, float boomLengthAimed, float alpha); // Lerp between aimed camera and idle aim camera for smooth transition
+
+	UFUNCTION()
+		void UpdateRangedCamera(); // Handle the logic for camera
+
+	UFUNCTION()
 		void CharacterRotation(float DeltaTime); // Handle character rotation properly
 
 	UFUNCTION()
-		void Aim();
+		void Aim(); // Aiming function for all the weapons
 
 	UFUNCTION()
-		void StopAim();
+		void StopAim(); // Stop the aiming for all the weapons
+
+	UFUNCTION()
+		void LaunchThrowingWeapon(); // Throw the throwing weapon 
+
+	UFUNCTION()
+		void RecallThrowingWeapon(); // Make the throwing weapon go back to the player
 
 #pragma endregion
 
@@ -134,11 +166,17 @@ protected:
 
 private:
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timeline", meta = (AllowPrivateAccess = true))
-		UCurveFloat* TLRangedCamera_Curve;
+	// Reference to the default throwingWeapon
+	UPROPERTY(BlueprintReadWrite, meta = (AllowPrivateAccess = true))
+		ADefaultThrowingWeapon* DefaultThrowingWeaponReference;
 
-	FOnTimelineFloat RangedCameraInterpFunction{}; // Track time for update ranged camera
-	FOnTimelineEvent RangedCameraTimelineFinished; // ranged camera finished
+	// A struct that lets the player do something once until it's reset
+	UPROPERTY(BlueprintReadOnly, meta = (AllowPrivateAccess = true))
+		FDoOnce DoOnce;
+
+	// The curve that handles lerping between aimed camera and idle camera
+	UPROPERTY(EditDefaultsOnly, Category = "Timeline", meta = (AllowPrivateAccess = true))
+		UCurveFloat* TLRangedCamera_Curve;		
 
 	UPROPERTY()
 		FVector CameraVector;
@@ -149,35 +187,54 @@ private:
 	UPROPERTY()
 		float CameraTurnRate; 
 
+	// How fast should the camera turn while not aiming?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		float CameraTurnRateIdle; // How fast should the camera turn while not aiming?
+		float CameraTurnRateIdle; 
 
+	// How fast should the camera turn while aiming?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		float CameraTurnRateAim; // How fast should the camera turn while aiming?
+		float CameraTurnRateAim; 
 
+	// How far should idle camera be from player?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		float CameraBoomIdle; // How far should idle camera be from player?
+		float CameraBoomIdle; 
 
+	// How far should aimed camera be from player?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = true))
-		float CameraBoomAimed; // How far should aimed camera be from player?
+		float CameraBoomAimed; 
 
+	// How fast should the player walk when aiming?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = true))
 		float MaxWalkSpeedAim;
 
+	// How fast should player be when not aiming?
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = true))
 		float MaxWalkSpeedIdle;
 
-	UPROPERTY()
-		bool bIsLeftTriggerDown;
+	// Throwing weapon velocity when thrown
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Throwing Weapon", meta = (AllowPrivateAccess = true))
+		float WeaponThrowSpeed;	
 
 	UPROPERTY()
-		bool bUseControllerRotation;
+		bool bIsAiming;	// Is player aiming?
 
 	UPROPERTY()
-		bool bIsAiming;
-
+		bool bIsThrowingWeaponLaunched; // Is the throwing weapon launched?
 	
+#pragma endregion
+
+#pragma region DELEGATE
+
+public:
+
+protected:
+
+private:
+
+	FOnTimelineFloat RangedCameraInterpFunction{}; // Delegate to track time for update ranged camera
+	FOnTimelineEvent RangedCameraTimelineFinished; // Delegate to track time for ranged camera finished
 
 #pragma endregion
+
 
 };

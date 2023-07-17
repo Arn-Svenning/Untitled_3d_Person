@@ -8,7 +8,7 @@ public class PlayerCharacter : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "PlayerCharacter", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "PlayerCharacter", "EnhancedInput", "Weapon", "Struct", "CableComponent" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
